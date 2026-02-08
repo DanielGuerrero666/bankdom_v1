@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../domain/models/category.dart';
 import '../../domain/models/transaction.dart';
 
 class TransactionList extends StatelessWidget {
   final List<Transaction> items;
+  final List<Category> categories;
   final VoidCallback onAddEarning;
   final VoidCallback onAddExpense;
   final void Function(int) onDelete;
@@ -11,10 +13,17 @@ class TransactionList extends StatelessWidget {
   const TransactionList({
     super.key,
     required this.items,
+    required this.categories,
     required this.onAddEarning,
     required this.onAddExpense,
     required this.onDelete,
   });
+
+  IconData _iconForCategory(String categoryName) {
+    final match = categories.where((c) => c.name == categoryName);
+    if (match.isNotEmpty) return match.first.icon;
+    return Icons.label;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,46 +65,23 @@ class TransactionList extends StatelessWidget {
                     final isEarning = item.type == TransactionType.earning;
                     final color = isEarning ? Colors.green : Colors.red;
                     final prefix = isEarning ? '+' : '-';
-                    final icon = isEarning
-                        ? Icons.trending_up
-                        : Icons.receipt_long;
+                    final icon = _iconForCategory(item.categoryName);
 
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(icon, color: color),
-                            title: Text(item.description),
-                            subtitle: Text(
-                              '${item.date.month}/${item.date.day}/${item.date.year}  ·  ${item.percentage.toStringAsFixed(1)}% of ${isEarning ? 'earnings' : 'expenses'}',
-                            ),
-                            trailing: Text(
-                              '$prefix\$${item.amount.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                color: color,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                            onLongPress: () => onDelete(index),
-                          ),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: (item.percentage / 100).clamp(0.0, 1.0),
-                              minHeight: 6,
-                              backgroundColor: Colors.grey.shade200,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(color),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                        ],
+                    return ListTile(
+                      leading: Icon(icon, color: color),
+                      title: Text(item.description),
+                      subtitle: Text(
+                        '${item.categoryName}  ·  ${item.date.month}/${item.date.day}/${item.date.year}',
                       ),
+                      trailing: Text(
+                        '$prefix\$${item.amount.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      onLongPress: () => onDelete(index),
                     );
                   },
                 ),

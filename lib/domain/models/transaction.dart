@@ -5,13 +5,13 @@ class Transaction {
   final double amount;
   final DateTime date;
   final TransactionType type;
-  double percentage;
+  final String categoryName;
 
   Transaction({
     required this.description,
     required this.amount,
     required this.date,
     required this.type,
-    this.percentage = 0.0,
+    required this.categoryName,
   });
 }
