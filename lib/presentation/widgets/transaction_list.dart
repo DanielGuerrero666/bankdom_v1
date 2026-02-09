@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../../domain/models/category.dart';
 import '../../domain/models/transaction.dart';
 
 class TransactionList extends StatelessWidget {
   final List<Transaction> items;
-  final List<Category> categories;
+  final String Function(int?) categoryNameFor;
+  final IconData Function(int?) categoryIconFor;
   final VoidCallback onAddEarning;
   final VoidCallback onAddExpense;
   final void Function(int) onDelete;
@@ -13,17 +13,12 @@ class TransactionList extends StatelessWidget {
   const TransactionList({
     super.key,
     required this.items,
-    required this.categories,
+    required this.categoryNameFor,
+    required this.categoryIconFor,
     required this.onAddEarning,
     required this.onAddExpense,
     required this.onDelete,
   });
-
-  IconData _iconForCategory(String categoryName) {
-    final match = categories.where((c) => c.name == categoryName);
-    if (match.isNotEmpty) return match.first.icon;
-    return Icons.label;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,13 +60,14 @@ class TransactionList extends StatelessWidget {
                     final isEarning = item.type == TransactionType.earning;
                     final color = isEarning ? Colors.green : Colors.red;
                     final prefix = isEarning ? '+' : '-';
-                    final icon = _iconForCategory(item.categoryName);
+                    final icon = categoryIconFor(item.categoryId);
+                    final catName = categoryNameFor(item.categoryId);
 
                     return ListTile(
                       leading: Icon(icon, color: color),
                       title: Text(item.description),
                       subtitle: Text(
-                        '${item.categoryName}  ·  ${item.date.month}/${item.date.day}/${item.date.year}',
+                        '$catName  ·  ${item.date.month}/${item.date.day}/${item.date.year}',
                       ),
                       trailing: Text(
                         '$prefix\$${item.amount.toStringAsFixed(2)}',

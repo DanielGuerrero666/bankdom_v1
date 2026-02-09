@@ -1,5 +1,14 @@
+// Step 6b: HomeScreen — now uses the repository for all data operations.
+//
+// On init, `_loadData()` fetches categories and transactions from SQLite.
+// Every add/delete calls the repository first, then reloads the lists from
+// the DB so the UI always reflects persisted state.
+// Category stats (totalAmount, percentage) are still computed in-memory after
+// each load since they are derived values, not stored data.
+
 import 'package:flutter/material.dart';
 
+import '../../data/repositories/transaction_repository.dart';
 import '../../domain/models/category.dart';
 import '../../domain/models/transaction.dart';
 import '../widgets/balance_circle.dart';
@@ -8,8 +17,14 @@ import '../widgets/icon_picker_dialog.dart';
 import '../widgets/transaction_list.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.title});
   final String title;
+  final TransactionRepository repository;
+
+  const HomeScreen({
+    super.key,
+    required this.title,
+    required this.repository,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -17,20 +32,38 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
-  final List<Transaction> _transactions = [];
-  final List<Category> _categories = [];
+  List<Transaction> _transactions = [];
+  List<Category> _categories = [];
   late TabController _tabController;
+  bool _loading = true;
+
+  TransactionRepository get _repo => widget.repository;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadData();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  // Reads all data from the DB and recalculates derived stats.
+  Future<void> _loadData() async {
+    final categories = await _repo.getAllCategories();
+    final transactions = await _repo.getAllTransactions();
+
+    _recalculateCategoryStats(categories, transactions);
+
+    setState(() {
+      _categories = categories;
+      _transactions = transactions;
+      _loading = false;
+    });
   }
 
   double get _totalExpenses => _transactions
@@ -43,31 +76,67 @@ class _HomeScreenState extends State<HomeScreen>
 
   double get _balance => _totalEarnings - _totalExpenses;
 
-  void _recalculateCategoryStats() {
-    for (final cat in _categories) {
-      final matching = _transactions
-          .where((t) => t.categoryName == cat.name && t.type == cat.type);
+  void _recalculateCategoryStats(
+      List<Category> categories, List<Transaction> transactions) {
+    final earningsTotal = transactions
+        .where((t) => t.type == TransactionType.earning)
+        .fold(0.0, (sum, t) => sum + t.amount);
+    final expensesTotal = transactions
+        .where((t) => t.type == TransactionType.expense)
+        .fold(0.0, (sum, t) => sum + t.amount);
+
+    for (final cat in categories) {
+      final matching = transactions
+          .where((t) => t.categoryId == cat.id && t.type == cat.type);
       cat.totalAmount = matching.fold(0.0, (sum, t) => sum + t.amount);
 
       final typeTotal =
-          cat.type == TransactionType.earning ? _totalEarnings : _totalExpenses;
-      cat.percentage = typeTotal == 0 ? 0.0 : (cat.totalAmount / typeTotal * 100);
+          cat.type == TransactionType.earning ? earningsTotal : expensesTotal;
+      cat.percentage =
+          typeTotal == 0 ? 0.0 : (cat.totalAmount / typeTotal * 100);
     }
   }
 
   List<Category> _categoriesForType(TransactionType type) =>
       _categories.where((c) => c.type == type).toList();
 
+  // Returns the category name for a given categoryId.
+  String _categoryNameFor(int? categoryId) {
+    if (categoryId == null) return '';
+    final match = _categories.where((c) => c.id == categoryId);
+    return match.isNotEmpty ? match.first.name : '';
+  }
+
+  // Returns the category icon for a given categoryId.
+  IconData _categoryIconFor(int? categoryId) {
+    if (categoryId == null) return Icons.label;
+    final match = _categories.where((c) => c.id == categoryId);
+    return match.isNotEmpty ? match.first.icon : Icons.label;
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.title)),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(widget.title),
-      ),
       body: Column(
         children: [
-          const SizedBox(height: 24),
+          const SizedBox(height: 32),
+          Center(
+            child: Text(
+              widget.title,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Center(child: BalanceCircle(balance: _balance)),
           const SizedBox(height: 8),
           Padding(
@@ -102,7 +171,8 @@ class _HomeScreenState extends State<HomeScreen>
               children: [
                 TransactionList(
                   items: _transactions,
-                  categories: _categories,
+                  categoryNameFor: _categoryNameFor,
+                  categoryIconFor: _categoryIconFor,
                   onAddEarning: _openAddEarningDialog,
                   onAddExpense: _openAddExpenseDialog,
                   onDelete: _confirmDeleteTransaction,
@@ -219,21 +289,21 @@ class _HomeScreenState extends State<HomeScreen>
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  // Inserts into the DB, then reloads all data so the UI
+                  // reflects the persisted state.
+                  onPressed: () async {
                     final amount = double.tryParse(amountController.text);
                     final desc = descController.text.trim();
                     if (amount != null && amount > 0 && desc.isNotEmpty) {
-                      setState(() {
-                        _transactions.add(Transaction(
-                          description: desc,
-                          amount: amount,
-                          date: DateTime.now(),
-                          type: type,
-                          categoryName: selectedCategory.name,
-                        ));
-                        _recalculateCategoryStats();
-                      });
-                      Navigator.pop(context);
+                      await _repo.insertTransaction(Transaction(
+                        description: desc,
+                        amount: amount,
+                        date: DateTime.now(),
+                        type: type,
+                        categoryId: selectedCategory.id,
+                      ));
+                      await _loadData();
+                      if (context.mounted) Navigator.pop(context);
                     }
                   },
                   child: const Text('Add'),
@@ -298,20 +368,20 @@ class _HomeScreenState extends State<HomeScreen>
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  // Inserts the category into the DB, reloads data.
+                  onPressed: () async {
                     final name = nameController.text.trim();
                     if (name.isNotEmpty) {
                       final exists = _categories
                           .any((c) => c.name == name && c.type == type);
                       if (!exists) {
-                        setState(() {
-                          _categories.add(Category(
-                            name: name,
-                            icon: selectedIcon,
-                            type: type,
-                          ));
-                        });
-                        Navigator.pop(context);
+                        await _repo.insertCategory(Category(
+                          name: name,
+                          icon: selectedIcon,
+                          type: type,
+                        ));
+                        await _loadData();
+                        if (context.mounted) Navigator.pop(context);
                       }
                     }
                   },
@@ -342,12 +412,11 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () {
-                setState(() {
-                  _transactions.removeAt(index);
-                  _recalculateCategoryStats();
-                });
-                Navigator.pop(context);
+              // Deletes from DB, reloads data.
+              onPressed: () async {
+                await _repo.deleteTransaction(item.id!);
+                await _loadData();
+                if (context.mounted) Navigator.pop(context);
               },
               child: const Text('Delete'),
             ),
@@ -360,7 +429,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _confirmDeleteCategory(int index) {
     final cat = _categories[index];
     final hasTransactions =
-        _transactions.any((t) => t.categoryName == cat.name);
+        _transactions.any((t) => t.categoryId == cat.id);
 
     showDialog(
       context: context,
@@ -379,14 +448,11 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () {
-                setState(() {
-                  _transactions.removeWhere(
-                      (t) => t.categoryName == cat.name && t.type == cat.type);
-                  _categories.removeAt(index);
-                  _recalculateCategoryStats();
-                });
-                Navigator.pop(context);
+              // Cascade delete: the DB removes linked transactions automatically.
+              onPressed: () async {
+                await _repo.deleteCategory(cat.id!);
+                await _loadData();
+                if (context.mounted) Navigator.pop(context);
               },
               child: const Text('Delete'),
             ),
